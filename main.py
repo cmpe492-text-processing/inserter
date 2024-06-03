@@ -3,10 +3,12 @@ import logging
 import multiprocessing
 import threading
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+
+from dotenv import load_dotenv
+from google.cloud import storage
 from generator import GenerateCorpus, Platform
 from database import DatabaseManager
 
-# Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -16,11 +18,34 @@ BATCH_SIZE = 100
 def log_process_thread_info(message):
     process_id = multiprocessing.current_process().pid
     thread_id = threading.current_thread().ident
-    logger.info(f"{message} (Process ID: {process_id}, Thread ID: {thread_id})")
+
+    logger.info(
+        f"{message} (Process ID: {process_id}, Thread ID: {thread_id})"
+    )
+
+
+def download_file(bucket_name, source_blob_name, destination_file_name):
+
+    logger.info(
+        f"Downloading {source_blob_name} to {destination_file_name}"
+    )
+
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(source_blob_name)
+    blob.download_to_filename(destination_file_name)
+
+    logger.info(
+        f"Downloaded {source_blob_name} to {destination_file_name}"
+    )
 
 
 def process_batch(batch, dir_name, subreddit_id, file, batch_number, total_batches):
-    log_process_thread_info(f"Processing batch {batch_number} out of {total_batches} for file {file}")
+
+    log_process_thread_info(
+        f"Processing batch {batch_number} out of {total_batches} for file {file}"
+    )
+
     corpus_list = []
     for line in batch:
         line = line.strip()
@@ -28,33 +53,49 @@ def process_batch(batch, dir_name, subreddit_id, file, batch_number, total_batch
         corpus = corpus_generator.generate_corpus()
         if corpus is not None:
             corpus_list.append(corpus)
-            logger.info(f"Generated corpus for line: {line} in batch {batch_number} for file {file}")
+
+            logger.info(
+                f"Batch {batch_number} out of {total_batches} for file {file} : {line}"
+            )
+
     return corpus_list
 
 
-def process_file(file, raw_data_dir, dir_name):
-    log_process_thread_info(f"Processing file {file}")
-    subreddit_id = int(file.split("_")[1][:2])
+def process_file(bucket_name, source_blob_name, raw_data_dir, dir_name):
+    local_file_path = os.path.join(raw_data_dir, source_blob_name.split("/")[-1])
+    download_file(bucket_name, source_blob_name, local_file_path)
 
-    with open(os.path.join(raw_data_dir, file), "r") as f:
+    log_process_thread_info(
+        f"Processing file {local_file_path}"
+    )
+
+    subreddit_id = int(local_file_path.split("_")[1][:2])
+    with open(local_file_path, "r") as f:
         lines = f.readlines()
         batches = [lines[i:i + BATCH_SIZE] for i in range(0, len(lines), BATCH_SIZE)]
         total_batches = len(batches)
-
         database_manager = DatabaseManager()
 
         with ThreadPoolExecutor() as executor:
+
             future_to_batch = {
-                executor.submit(process_batch, batch, dir_name, subreddit_id, file, batch_num + 1, total_batches): batch
-                for batch_num, batch in enumerate(batches)}
+                executor.submit(process_batch, batch, dir_name, subreddit_id,
+                                local_file_path, batch_num + 1, total_batches): batch
+                for batch_num, batch in enumerate(batches)
+            }
+
             for future in as_completed(future_to_batch):
                 batch = future_to_batch[future]
                 batch_number = batches.index(batch) + 1
                 try:
                     batch_corpus_list = future.result()
                     if batch_corpus_list:
+
                         logger.info(
-                            f"Inserting {len(batch_corpus_list)} corpuses into the database from batch {batch_number} of file {file}")
+                            f"Inserting {len(batch_corpus_list)} corpuses into the database from batch "
+                            f"{batch_number} of file {local_file_path}"
+                        )
+
                         try_count = 10
                         while try_count > 0:
                             try:
@@ -62,29 +103,52 @@ def process_file(file, raw_data_dir, dir_name):
                                 break
                             except Exception as exc:
                                 logger.error(
-                                    f"Batch {batch_number} out of {total_batches} for file {file} generated an exception: {exc}")
+                                    f"Batch {batch_number} out of {total_batches} for file "
+                                    f"{local_file_path} generated an exception: {exc}"
+
+                                )
+                                database_manager.close_connection()
+                                database_manager.create_connection()
                                 try_count -= 1
 
                 except Exception as exc:
                     logger.error(
-                        f"Batch {batch_number} out of {total_batches} for file {file} generated an exception: {exc}")
+                        f"Batch {batch_number} out of {total_batches} for file "
+                        f"{local_file_path} generated an exception: {exc}"
+                    )
 
-    logger.info(f"Processed {len(lines)} lines from {file}")
+    logger.info(
+        f"Processed {len(lines)} lines from {local_file_path}"
+    )
+
+    os.remove(local_file_path)
 
 
 def inserter():
-    raw_data_dir = "/Users/bgezer/Documents/_root/_boun/8.Donem/senior-project/project-x-server/resources/data/2of2"
-    dir_name = raw_data_dir.split("/")[-1]
-    files = sorted(os.listdir(raw_data_dir))
+    load_dotenv()
+    bucket_name = "cmpe492-wiki"
+    raw_data_dir = "/tmp/data"
+    os.makedirs(raw_data_dir, exist_ok=True)
+    folders = ["1of2", "2of2"]
 
     with ProcessPoolExecutor() as executor:
-        future_to_file = {executor.submit(process_file, file, raw_data_dir, dir_name): file for file in files}
-        for future in as_completed(future_to_file):
-            file = future_to_file[future]
-            try:
-                future.result()
-            except Exception as exc:
-                logger.error(f"{file} generated an exception: {exc}")
+        for folder in folders:
+            blobs = storage.Client().list_blobs(bucket_name, prefix=folder + "/")
+
+            future_to_blob = {
+                executor.submit(process_file, bucket_name,
+                                blob.name, raw_data_dir, folder): blob
+                for blob in blobs
+            }
+
+            for future in as_completed(future_to_blob):
+                blob = future_to_blob[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.error(
+                        f"{blob.name} generated an exception: {exc}"
+                    )
 
 
 if __name__ == "__main__":
