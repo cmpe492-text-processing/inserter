@@ -6,7 +6,6 @@ import re
 
 
 class TextProcessor:
-
     def __init__(self):
         self._nltk = nltk
         self._nltk.download("punkt", quiet=True)

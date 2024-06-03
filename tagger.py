@@ -6,9 +6,8 @@ from tagme import Annotation
 
 
 class TagmeManager:
-
     def __init__(self, rho):
-        load_dotenv("../../.env")
+        load_dotenv()
         self.api_key = os.getenv("TAGME_API_KEY")
         tagme.GCUBE_TOKEN = self.api_key
         self.rho = rho
