@@ -1,0 +1,4 @@
+.idea
+.env
+service-account-file.json
+.DS_Store
