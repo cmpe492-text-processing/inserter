@@ -12,6 +12,11 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
+# Install postgresql related dependencies
+RUN apt-get update \
+    && apt-get -y install libpq-dev gcc \
+    && pip install psycopg2
+
 # Install any needed packages specified in requirements.txt + the special Python tagme module
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install git+https://github.com/alabeybahri/tagme-python.git@aceca09c3cf0aa5eb1a90d8f02472230e57a8a3e
