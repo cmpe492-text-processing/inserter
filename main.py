@@ -1,4 +1,5 @@
 import os
+import nltk
 import logging
 import multiprocessing
 import threading
@@ -25,7 +26,6 @@ def log_process_thread_info(message):
 
 
 def download_file(bucket_name, source_blob_name, destination_file_name):
-
     logger.info(
         f"Downloading {source_blob_name} to {destination_file_name}"
     )
@@ -41,7 +41,6 @@ def download_file(bucket_name, source_blob_name, destination_file_name):
 
 
 def process_batch(batch, dir_name, subreddit_id, file, batch_number, total_batches):
-
     log_process_thread_info(
         f"Processing batch {batch_number} out of {total_batches} for file {file}"
     )
@@ -124,8 +123,24 @@ def process_file(bucket_name, source_blob_name, raw_data_dir, dir_name):
     os.remove(local_file_path)
 
 
+def prepare():
+    logger.info("Starting NLTK downloads")
+    nltk.download("punkt")
+    nltk.download("averaged_perceptron_tagger")
+    nltk.download("maxent_ne_chunker")
+    nltk.download("words")
+    nltk.download("stopwords")
+    nltk.download("wordnet")
+    nltk.download("vader_lexicon")
+    nltk.download("omw")
+    nltk.download("universal_tagset")
+
+    logger.info("NLTK downloads finished")
+
+
 def inserter():
     load_dotenv()
+    prepare()
     bucket_name = "cmpe492-wiki"
     raw_data_dir = "/tmp/data"
     os.makedirs(raw_data_dir, exist_ok=True)
