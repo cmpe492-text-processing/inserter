@@ -146,9 +146,17 @@ def inserter():
     os.makedirs(raw_data_dir, exist_ok=True)
     folders = ["1of2", "2of2"]
 
+    chosen = os.getenv("INS_FOLDER")
+    files = os.getenv("INS_FILES").split(",")
+
     with ProcessPoolExecutor() as executor:
         for folder in folders:
+            if folder != chosen:
+                continue
+
             blobs = storage.Client().list_blobs(bucket_name, prefix=folder + "/")
+            # the files are just two digits, so we can filter them
+            blobs = [blob for blob in blobs if blob.name.split("_")[-1] in files]
 
             future_to_blob = {
                 executor.submit(process_file, bucket_name,
@@ -167,4 +175,5 @@ def inserter():
 
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method("spawn")
     inserter()
